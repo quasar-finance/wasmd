@@ -188,7 +188,13 @@ func (h IBCRawPacketHandler) DispatchMsg(ctx sdk.Context, _ sdk.AccAddress, cont
 		ConvertWasmIBCTimeoutHeightToCosmosHeight(msg.IBC.SendPacket.Timeout.Block),
 		msg.IBC.SendPacket.Timeout.Timestamp,
 	)
-	return nil, nil, h.channelKeeper.SendPacket(ctx, channelCap, packet)
+	if err := h.channelKeeper.SendPacket(ctx, channelCap, packet); err != nil {
+		return nil, nil, sdkerrors.Wrap(err, "failed to send packet")
+	}
+
+	// Encode the sequence in big endian order and append it to data so that it can be retrieved by contract
+	data = append(data, sdk.Uint64ToBigEndian(sequence))
+	return
 }
 
 var _ Messenger = MessageHandlerFunc(nil)
