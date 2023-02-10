@@ -16,6 +16,7 @@ import (
 	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
 	distributionkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
 	govtypesv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	paramskeeper "github.com/cosmos/cosmos-sdk/x/params/keeper"
@@ -66,7 +67,7 @@ func TestGenesisExportImport(t *testing.T) {
 
 		creatorAddr, err := sdk.AccAddressFromBech32(codeInfo.Creator)
 		require.NoError(t, err)
-		codeID, err := contractKeeper.Create(srcCtx, creatorAddr, wasmCode, &codeInfo.InstantiateConfig)
+		codeID, _, err := contractKeeper.Create(srcCtx, creatorAddr, wasmCode, &codeInfo.InstantiateConfig)
 		require.NoError(t, err)
 		if pinned {
 			contractKeeper.PinCode(srcCtx, codeID)
@@ -81,7 +82,7 @@ func TestGenesisExportImport(t *testing.T) {
 		}
 
 		contract.CodeID = codeID
-		contractAddr := wasmKeeper.generateContractAddress(srcCtx, codeID)
+		contractAddr := wasmKeeper.ClassicAddressGenerator()(srcCtx, codeID, nil)
 		wasmKeeper.storeContractInfo(srcCtx, contractAddr, &contract)
 		wasmKeeper.appendToContractHistory(srcCtx, contractAddr, history...)
 		wasmKeeper.importContractState(srcCtx, contractAddr, stateModels)
@@ -110,7 +111,9 @@ func TestGenesisExportImport(t *testing.T) {
 
 	// reset contract code index in source DB for comparison with dest DB
 	wasmKeeper.IterateContractInfo(srcCtx, func(address sdk.AccAddress, info wasmTypes.ContractInfo) bool {
+		creatorAddress := sdk.MustAccAddressFromBech32(info.Creator)
 		wasmKeeper.removeFromContractCodeSecondaryIndex(srcCtx, address, wasmKeeper.getLastContractHistoryEntry(srcCtx, address))
+
 		prefixStore := prefix.NewStore(srcCtx.KVStore(wasmKeeper.storeKey), types.GetContractCodeHistoryElementPrefix(address))
 		iter := prefixStore.Iterator(nil, nil)
 
@@ -121,6 +124,7 @@ func TestGenesisExportImport(t *testing.T) {
 		newHistory := x.ResetFromGenesis(dstCtx)
 		wasmKeeper.storeContractInfo(srcCtx, address, x)
 		wasmKeeper.addToContractCodeSecondaryIndex(srcCtx, address, newHistory)
+		wasmKeeper.addToContractCreatorSecondaryIndex(srcCtx, creatorAddress, newHistory.Updated, address)
 		wasmKeeper.appendToContractHistory(srcCtx, address, newHistory)
 		iter.Close()
 		return false
@@ -268,7 +272,7 @@ func TestGenesisInit(t *testing.T) {
 				}},
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					},
 				},
@@ -289,10 +293,10 @@ func TestGenesisInit(t *testing.T) {
 				}},
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					}, {
-						ContractAddress: BuildContractAddress(1, 2).String(),
+						ContractAddress: BuildContractAddressClassic(1, 2).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					},
 				},
@@ -308,7 +312,7 @@ func TestGenesisInit(t *testing.T) {
 			src: types.GenesisState{
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					},
 				},
@@ -324,10 +328,10 @@ func TestGenesisInit(t *testing.T) {
 				}},
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					}, {
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					},
 				},
@@ -343,7 +347,7 @@ func TestGenesisInit(t *testing.T) {
 				}},
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 						ContractState: []types.Model{
 							{
@@ -391,7 +395,7 @@ func TestGenesisInit(t *testing.T) {
 				}},
 				Contracts: []types.Contract{
 					{
-						ContractAddress: BuildContractAddress(1, 1).String(),
+						ContractAddress: BuildContractAddressClassic(1, 1).String(),
 						ContractInfo:    types.ContractInfoFixture(func(c *wasmTypes.ContractInfo) { c.CodeID = 1 }, types.OnlyGenesisFields),
 					},
 				},
@@ -601,7 +605,7 @@ func TestSupportedGenMsgTypes(t *testing.T) {
 				Sum: &types.GenesisState_GenMsgs_ExecuteContract{
 					ExecuteContract: &types.MsgExecuteContract{
 						Sender:   verifierAddress.String(),
-						Contract: BuildContractAddress(1, 1).String(),
+						Contract: BuildContractAddressClassic(1, 1).String(),
 						Msg:      []byte(`{"release":{}}`),
 					},
 				},
@@ -626,7 +630,7 @@ func TestSupportedGenMsgTypes(t *testing.T) {
 	require.NotNil(t, codeInfo)
 
 	// verify contract instantiated
-	cInfo := keeper.GetContractInfo(ctx, BuildContractAddress(1, 1))
+	cInfo := keeper.GetContractInfo(ctx, BuildContractAddressClassic(1, 1))
 	require.NotNil(t, cInfo)
 
 	// verify contract executed
@@ -669,7 +673,7 @@ func setupKeeper(t *testing.T) (*Keeper, sdk.Context, []storetypes.StoreKey) {
 	wasmConfig := wasmTypes.DefaultWasmConfig()
 	pk := paramskeeper.NewKeeper(encodingConfig.Marshaler, encodingConfig.Amino, keyParams, tkeyParams)
 
-	srcKeeper := NewKeeper(encodingConfig.Marshaler, keyWasm, pk.Subspace(wasmTypes.ModuleName), authkeeper.AccountKeeper{}, nil, stakingkeeper.Keeper{}, distributionkeeper.Keeper{}, nil, nil, nil, nil, nil, nil, tempDir, wasmConfig, SupportedFeatures)
+	srcKeeper := NewKeeper(encodingConfig.Marshaler, keyWasm, pk.Subspace(wasmTypes.ModuleName), authkeeper.AccountKeeper{}, bankkeeper.BaseKeeper{}, stakingkeeper.Keeper{}, distributionkeeper.Keeper{}, nil, nil, nil, nil, nil, nil, tempDir, wasmConfig, AvailableCapabilities)
 	return &srcKeeper, ctx, []storetypes.StoreKey{keyWasm, keyParams}
 }
 
