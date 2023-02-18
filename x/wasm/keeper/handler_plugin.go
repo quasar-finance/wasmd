@@ -9,6 +9,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	ibctypes "github.com/cosmos/ibc-go/v4/modules/apps/transfer/types"
 	channeltypes "github.com/cosmos/ibc-go/v4/modules/core/04-channel/types"
 	host "github.com/cosmos/ibc-go/v4/modules/core/24-host"
 
@@ -188,7 +189,21 @@ func (h IBCRawPacketHandler) DispatchMsg(ctx sdk.Context, _ sdk.AccAddress, cont
 		ConvertWasmIBCTimeoutHeightToCosmosHeight(msg.IBC.SendPacket.Timeout.Block),
 		msg.IBC.SendPacket.Timeout.Timestamp,
 	)
-	return nil, nil, h.channelKeeper.SendPacket(ctx, channelCap, packet)
+	if err := h.channelKeeper.SendPacket(ctx, channelCap, packet); err != nil {
+		return nil, nil, sdkerrors.Wrap(err, "failed to send packet")
+	}
+
+	// Encode the sequence in a struct and append it to data so that it can be retrieved by contract
+	// we're reusing MsgTransferResponse here because it's the same proto, but it would be cleaner to not do this
+	resp := &ibctypes.MsgTransferResponse{Sequence: sequence}
+	val, err := resp.Marshal()
+
+	if err != nil {
+		return nil, nil, sdkerrors.Wrap(err, "failed to marshal sequence response")
+	}
+
+	data = append(data, val)
+	return nil, data, nil
 }
 
 var _ Messenger = MessageHandlerFunc(nil)
